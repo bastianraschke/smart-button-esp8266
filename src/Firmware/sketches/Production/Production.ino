@@ -10,36 +10,37 @@
 
 #define WIFI_SSID                               ""
 #define WIFI_PASSWORD                           ""
+#define WIFI_CONNECTION_RETRIES                 20
 
-#define OPENHAB_REQUESTPATH                     "https://10.0.0.3/CMD?Group_All_LightSwitches=TOGGLE"
-#define OPENHAB_SERVER_TLS_FINGERPRINT          ""
+#define OPENHAB_REQUESTPATH                     "https://10.0.0.3/CMD?GroupName=TOGGLE"
+#define OPENHAB_SERVER_TLS_FINGERPRINT          "XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX"
 #define OPENHAB_USERNAME                        ""
 #define OPENHAB_PASSWORD                        ""
-
-
-#define UPDATE_PATH                             "/update"
-#define UPDATE_USERNAME                         "admin"
-#define UPDATE_PASSWORD                         ""
+#define OPENHAB_REQUEST_TIMEOUT                 5000
 
 #define PIN_STATUSLED                           2
 
 HTTPClient httpClient;
+int connectionFailCouter = WIFI_CONNECTION_RETRIES;
 
 void setup()
 {
     Serial.begin(115200);
-    delay(100);
 
     setupPins();
     setupWifi();
 
     const bool wasSuccessful = sendRequest();
 
-    if (wasSuccessful == false)
+    if (wasSuccessful)
+    {
+        blinkStatusSendingRequest();
+    }
+    else
     {
         blinkStatusError();
     }
-    
+
     startDeepSleep();
 }
 
@@ -60,18 +61,37 @@ void setupWifi()
 
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
+    bool wasSuccessful = true;
+
     while (WiFi.status() != WL_CONNECTED)
     {
-        blinkStatusConnecting();
+        if (connectionFailCouter <= 0)
+        {
+            wasSuccessful = false;
+            break;
+        }
 
-        delay(500);
-        Serial.print(F("."));
+        Serial.print(".");
+
+        blinkStatusConnecting();
+        delay(300);
+
+        connectionFailCouter--;
     }
 
     Serial.println();
 
-    Serial.print(F("Connected to Wi-Fi access point. Obtained IP address: "));
-    Serial.println(WiFi.localIP());
+    if (wasSuccessful)
+    {
+        Serial.print("Connected to Wi-Fi access point. Obtained IP address: ");
+        Serial.println(WiFi.localIP());
+    }
+    else
+    {
+        Serial.printf("Connection failed after %i tries! Giving up.\n", WIFI_CONNECTION_RETRIES);
+        blinkStatusError();
+        startDeepSleep();
+    }
 }
 
 bool sendRequest()
@@ -80,12 +100,10 @@ bool sendRequest()
 
     Serial.println("Sending request...");
 
-    blinkStatusSendingRequest();
-
     httpClient.begin(OPENHAB_REQUESTPATH, OPENHAB_SERVER_TLS_FINGERPRINT);
     httpClient.setAuthorization(OPENHAB_USERNAME, OPENHAB_PASSWORD);
 
-    // httpClient.setTimeout();
+    httpClient.setTimeout(OPENHAB_REQUEST_TIMEOUT);
 
     const int httpCode = httpClient.GET();
 
@@ -97,14 +115,14 @@ bool sendRequest()
         {
             wasSuccessful = true;
 
-            String payload = httpClient.getString();
+            const String payload = httpClient.getString();
             Serial.println("Server response:");
             Serial.println(payload);
         }
     }
     else
     {
-        Serial.printf("Request failed (error: '%s', error code %i)!\n", httpClient.errorToString(httpCode).c_str(), httpCode);
+        Serial.printf("Request failed (error: '%s', error code: %i)!\n", httpClient.errorToString(httpCode).c_str(), httpCode);
     }
 
     httpClient.end();
@@ -125,20 +143,6 @@ void startDeepSleep()
     }
 }
 
-void blinkStatusLED(const int times, const int waitDelayInMilliseconds)
-{
-    for (int i = 0; i < times; i++)
-    {
-        // Enable LED
-        digitalWrite(PIN_STATUSLED, LOW);
-        delay(waitDelayInMilliseconds);
-
-        // Disable LED
-        digitalWrite(PIN_STATUSLED, HIGH);
-        delay(waitDelayInMilliseconds);
-    }
-}
-
 void blinkStatusConnecting()
 {
     blinkStatusLED(2, 100);
@@ -146,17 +150,31 @@ void blinkStatusConnecting()
 
 void blinkStatusSendingRequest()
 {
-    for (int i = 4; i < 50; i=(5*i) >> 2) {
-        digitalWrite(PIN_STATUSLED, HIGH);   // turn the LED off
-        delay(10*i);               // wait
-        digitalWrite(PIN_STATUSLED, LOW);    // turn the LED on
-        delay(10*i);               // wait
+    for (int i = 4; i < 50; i = (5*i) >> 2)
+    {
+        digitalWrite(PIN_STATUSLED, HIGH);
+        delay(10 * i);
+
+        digitalWrite(PIN_STATUSLED, LOW);
+        delay(10 * i);
     }
 }
 
 void blinkStatusError()
 {
     blinkStatusLED(10, 125);
+}
+
+void blinkStatusLED(const int times, const int waitDelayInMilliseconds)
+{
+    for (int i = 0; i < times; i++)
+    {
+        digitalWrite(PIN_STATUSLED, HIGH);
+        delay(waitDelayInMilliseconds);
+
+        digitalWrite(PIN_STATUSLED, LOW);
+        delay(waitDelayInMilliseconds);
+    }
 }
 
 void loop()
